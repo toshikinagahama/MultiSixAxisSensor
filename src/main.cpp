@@ -1,78 +1,140 @@
 #include <M5StickC.h>
-#include "BluetoothSerial.h"
-#include <utility/MahonyAHRS.h>
+#include "global.h"
+#include "SixAxisSensor.h"
+#include "MyBLE.h"
+#include "func.h"
 
-//姿勢関連
-float accX = 0.0F;
-float accY = 0.0F;
-float accZ = 0.0F;
+MyBLE *ble = new MyBLE();
+SixAxisSensor *sixSensor = new SixAxisSensor();
 
-float gyroX = 0.0F;
-float gyroY = 0.0F;
-float gyroZ = 0.0F;
+//タイマー割り込み用
 
-float pitch = 0.0F;
-float roll = 0.0F;
-float yaw = 0.0F;
+hw_timer_t *timer = NULL;
 
-float temp = 0.0F;
+int sampling_period_us;
 
-//[追加]GyroZのデータを蓄積するための変数
-float stockedGyroZs[10];
-int stockCnt = 0;
-float adjustGyroZ = 0;
-int stockedGyroZLength = 0;
+/**
+ * 
+ * イベント検知
+ */
+void DETECT_EVENT()
+{
+  timer_stop = millis();
+  uint64_t elaspedTime = timer_stop - timer_start;
 
-//Bluetooth関連
-byte counter;
+  if (M5.BtnA.pressedFor(1000))
+  {
+    event = EVT_BTN_A_LONGPRESS;
+  }
+  else if (M5.BtnB.pressedFor(1000))
+  {
+    event = EVT_BTN_B_LONGPRESS;
+  }
+  else if (elaspedTime < 60 * 1000)
+  {
+    event = EVT_TIMEOUT;
+  }
+  else
+  {
+    event = EVT_NOP;
+  }
+}
 
-BluetoothSerial bts;
+void sampling(void *arg)
+{
+  while (1)
+  {
+    if (state == STATE_MEAS)
+    {
+      if (IsConnected)
+      {
+        if (!IsMeasStop)
+        {
+          unsigned long time_start = micros();
+          sixSensor->getValues();
+          char val[128];
+          sprintf(val, "%f,%f,%f,%f,%f,%f\r\n", sixSensor->acc[0], sixSensor->acc[1], sixSensor->acc[2], sixSensor->gyro[0], sixSensor->gyro[1], sixSensor->gyro[2]);
+          ble->notify(val);
+          //サンプリング分待つ
+          unsigned long time_end = micros();
+          while (time_end - time_start < sampling_period_us)
+          {
+            time_end = micros();
+          }
+        }
+      }
+    }
+    else
+    {
+      delay(500);
+    }
+  }
+}
 
 void setup()
 {
-
-  stockedGyroZLength = sizeof(stockedGyroZs) / sizeof(int);
-
+  Serial.begin(115200);
   M5.begin();
-  M5.Lcd.println("Bluetooth Now");
-  M5.IMU.Init();
+  show_battery_info();
 
-  Serial.begin(9600);
-  bts.begin("M5StickC"); //PC側で確認するときの名前
+  ble->initialize();
+  sixSensor->initialize();
 
-  counter = 0;
+  sampling_period_us = round(1000000 * (1.0 / 32)); //サンプリング時間の設定
+  xTaskCreatePinnedToCore(sampling, "sampling", 4096, NULL, 1, NULL, 0);
 }
 
 void loop()
 {
-  if (M5.BtnB.wasPressed())
-  {
-    esp_restart();
-  }
-  // put your main code here, to run repeatedly:
-  M5.IMU.getGyroData(&gyroX, &gyroY, &gyroZ);
-  M5.IMU.getAccelData(&accX, &accY, &accZ);
-  //[変更]これは使わない
-  M5.IMU.getAhrsData(&pitch, &roll, &yaw);
-
-  //[追加]起動時にstockedGyroZLengthの数だけデータを貯める
-  // if(stockCnt<stockedGyroZLength){
-  //   stockedGyroZs[stockCnt]=gyroZ;
-  //   stockCnt++;
-  // }else{
-  //   if(adjustGyroZ==0){
-  //     for(int i=0;i<stockedGyroZLength;i++){
-  //       adjustGyroZ+=stockedGyroZs[i]/stockedGyroZLength;
-  //     }
-  //   }
-  //   //貯めたデータの平均値を使ってgyroZを補正する
-  //   gyroZ-=adjustGyroZ;
-  //   //ここでaccelデータと補正したgyroデータを使ってpitch・roll・yawを計算する
-  //   MahonyAHRSupdateIMU(gyroX * DEG_TO_RAD, gyroY * DEG_TO_RAD, gyroZ * DEG_TO_RAD, accX, accY, accZ, &pitch, &roll, &yaw);
-  // }
-
-  bts.printf("%f,%f,%f,%f,%f,%f,%f,%f,%f\r\n", accX, accY, accZ, gyroX, gyroY, gyroZ, roll, pitch, yaw);
-  counter++;
   M5.update();
-  delay(10);
+  if (M5.BtnA.wasPressed())
+  {
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(0, 0);
+    show_battery_info();
+  }
+
+  DETECT_EVENT();
+
+  switch (state)
+  {
+  case STATE_WAIT_INIT:
+    M5.Lcd.printf("WAIT\n");
+    ble->advertiseStop();
+    setCpuFrequencyMhz(80);
+    state = STATE_WAIT;
+    break;
+  case STATE_WAIT:
+    if (event == EVT_BTN_A_LONGPRESS)
+      state = STATE_ADVERTISE_INIT;
+    delay(500);
+    break;
+  case STATE_ADVERTISE_INIT:
+    timer_start = millis();
+    setCpuFrequencyMhz(240);
+    M5.Lcd.printf("Advertise Start\n");
+    ble->advertiseStart();
+    state = STATE_ADVERTISE;
+    break;
+  case STATE_ADVERTISE:
+    if (event == EVT_BTN_B_LONGPRESS)
+      state = STATE_WAIT_INIT;
+    if (IsConnected)
+      state = STATE_WAIT_MEAS;
+    if (event == EVT_TIMEOUT)
+      state = STATE_WAIT_INIT;
+    break;
+  case STATE_WAIT_MEAS:
+    if (!IsMeasStop)
+      state = STATE_MEAS;
+    if (!IsConnected)
+      state = STATE_WAIT_INIT;
+    break;
+  case STATE_MEAS:
+    if (IsMeasStop)
+      state = STATE_WAIT_MEAS;
+    break;
+  default:
+    break;
+  }
 }
