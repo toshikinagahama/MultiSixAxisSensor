@@ -38,7 +38,7 @@ extern bool IsMeasStop;
 extern uint8_t state;
 extern uint8_t event;
 extern char device_id[64];
-extern uint64_t timer_start;
-extern uint64_t timer_stop;
+extern uint64_t timer_start_timeout;
+extern uint64_t timer_stop_timeout;
 
 #endif //GLOBAL_H

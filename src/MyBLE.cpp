@@ -43,7 +43,7 @@ class MyCallbacks : public BLECharacteristicCallbacks
     {
       IsMeasStop = true;
     }
-    Serial.println(value.c_str());
+    // Serial.println(value.c_str());
     M5.Lcd.println(value.c_str());
   }
 };

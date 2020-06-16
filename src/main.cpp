@@ -19,8 +19,8 @@ int sampling_period_us;
  */
 void DETECT_EVENT()
 {
-  timer_stop = millis();
-  uint64_t elaspedTime = timer_stop - timer_start;
+  timer_stop_timeout = millis();
+  uint64_t elaspedTime = timer_stop_timeout - timer_start_timeout;
 
   if (M5.BtnA.pressedFor(1000))
   {
@@ -30,20 +30,32 @@ void DETECT_EVENT()
   {
     event = EVT_BTN_B_LONGPRESS;
   }
-  else if (elaspedTime < 60 * 1000)
+  else if (elaspedTime >= 60 * 1000)
   {
-    event = EVT_TIMEOUT;
+    switch (state)
+    {
+    case STATE_ADVERTISE:
+      /* code */
+      event = EVT_TIMEOUT;
+      break;
+
+    default:
+      event = EVT_NOP;
+      break;
+    }
   }
   else
   {
     event = EVT_NOP;
   }
+  // Serial.printf("%d\n", event);
 }
 
 void sampling(void *arg)
 {
   while (1)
   {
+
     if (state == STATE_MEAS)
     {
       if (IsConnected)
@@ -55,6 +67,7 @@ void sampling(void *arg)
           char val[128];
           sprintf(val, "%f,%f,%f,%f,%f,%f\r\n", sixSensor->acc[0], sixSensor->acc[1], sixSensor->acc[2], sixSensor->gyro[0], sixSensor->gyro[1], sixSensor->gyro[2]);
           ble->notify(val);
+          // Serial.printf(val);
           //サンプリング分待つ
           unsigned long time_end = micros();
           while (time_end - time_start < sampling_period_us)
@@ -66,22 +79,23 @@ void sampling(void *arg)
     }
     else
     {
-      delay(500);
+      delay(1000);
     }
   }
 }
 
 void setup()
 {
-  Serial.begin(115200);
   M5.begin();
+  Serial.begin(9600);
+  M5.Axp.ScreenBreath(8);
   show_battery_info();
 
   ble->initialize();
   sixSensor->initialize();
 
   sampling_period_us = round(1000000 * (1.0 / 32)); //サンプリング時間の設定
-  xTaskCreatePinnedToCore(sampling, "sampling", 4096, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(sampling, "sampling", 4096, NULL, 1, NULL, 1);
 }
 
 void loop()
@@ -101,16 +115,16 @@ void loop()
   case STATE_WAIT_INIT:
     M5.Lcd.printf("WAIT\n");
     ble->advertiseStop();
-    setCpuFrequencyMhz(80);
+    setCpuFrequencyMhz(20);
     state = STATE_WAIT;
     break;
   case STATE_WAIT:
     if (event == EVT_BTN_A_LONGPRESS)
       state = STATE_ADVERTISE_INIT;
-    delay(500);
+    delay(1);
     break;
   case STATE_ADVERTISE_INIT:
-    timer_start = millis();
+    timer_start_timeout = millis();
     setCpuFrequencyMhz(240);
     M5.Lcd.printf("Advertise Start\n");
     ble->advertiseStart();

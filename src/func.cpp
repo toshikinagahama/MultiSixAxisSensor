@@ -8,9 +8,9 @@ int8_t show_battery_info()
   // AXP192のデータシートによると1ステップは1.1mV
   float vbat = M5.Axp.GetVbatData() * 1.1 / 1000;
   float current = M5.Axp.GetBatCurrent();
-  if (current < 0.1)
+  if (current * current < 1.0)
   {
-    current = M5.Axp.GetVinCurrent();
+    current = M5.Axp.GetVBusCurrent();
   }
 
   // バッテリー残量表示
@@ -26,6 +26,6 @@ int8_t show_battery_info()
   }
   M5.Lcd.printf("Volt: %.2fV\n", vbat);
   M5.Lcd.printf("Charge: %3d%%\n", bat_charge_p);
-  M5.Lcd.printf("Current: %.2fV\n", current);
+  M5.Lcd.printf("Current: %.2fmA\n", current);
   // return bat_charge_p;
 }
