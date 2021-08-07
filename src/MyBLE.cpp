@@ -43,8 +43,60 @@ class MyCallbacks : public BLECharacteristicCallbacks
     {
       IsMeasStop = true;
     }
+    else if (value == "3333")
+    {
+    }
     // Serial.println(value.c_str());
     M5.Lcd.println(value.c_str());
+  }
+};
+
+// ペアリング処理用
+class MySecurity : public BLESecurityCallbacks
+{
+  bool onConfirmPIN(uint32_t pin)
+  {
+    return false;
+  }
+
+  uint32_t onPassKeyRequest()
+  {
+    Serial.println("ONPassKeyRequest");
+    return 123456;
+  }
+
+  void onPassKeyNotify(uint32_t pass_key)
+  {
+    // ペアリング時のPINの表示
+    Serial.println("onPassKeyNotify number");
+    Serial.println(pass_key);
+
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.println("PIN");
+    M5.Lcd.println(pass_key);
+  }
+
+  bool onSecurityRequest()
+  {
+    Serial.println("onSecurityRequest");
+    return true;
+  }
+
+  void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl)
+  {
+    Serial.println("onAuthenticationComplete");
+    if (cmpl.success)
+    {
+      // ペアリング完了
+      Serial.println("auth success");
+    }
+    else
+    {
+      // ペアリング失敗
+      Serial.println("auth failed");
+    }
   }
 };
 
@@ -57,9 +109,21 @@ void MyBLE::initialize()
 {
 
   BLEDevice::init("M5StickC");
+  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
+  BLEDevice::setSecurityCallbacks(new MySecurity());
+  BLESecurity *pSecurity = new BLESecurity();
+  pSecurity->setKeySize(16);
+
+  pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
+  pSecurity->setCapability(ESP_IO_CAP_OUT);
+  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  uint32_t passkey = 123456;
+  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_STATIC_PASSKEY, &passkey, sizeof(uint32_t));
+
   pServer = BLEDevice::createServer();
   pService = pServer->createService(SERVICE_UUID);
   pServer->setCallbacks(new MyServerCallbacks());
+
   pCharacteristic = pService->createCharacteristic(
       CHARACTERISTIC_UUID,
       BLECharacteristic::PROPERTY_READ |
